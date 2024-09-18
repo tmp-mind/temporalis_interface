@@ -14,7 +14,7 @@ from datetime import datetime
 # Variables globales pour le défilement et la fenêtre active
 file_scroll_pos = 0
 process_scroll_pos = 0
-current_window = "files"
+current_window = "input"  # Focus par défaut sur l'input du terminal
 last_system_refresh = 0
 last_terminal_refresh = 0
 input_buffer = ""  # Buffer pour la saisie du terminal
@@ -22,33 +22,36 @@ output_lines = []  # Pour stocker les lignes de sortie du terminal
 last_directory = ""  # Pour suivre le répertoire actuel du terminal
 last_prompt = "$"  # On laisse uniquement le symbole "$" pour le prompt
 
-# Fonction pour quitter proprement avec Ctrl+C
-def handle_exit(signum, frame):
+# Liste des programmes interactifs que nous allons traiter
+interactive_programs = ["nano", "vim", "vi", "htop", "less", "more", "man"]
+
+# Fonction pour quitter proprement avec Ctrl+C ou F8
+def handle_exit(signum=None, frame=None):
     curses.endwin()
     sys.exit(0)
 
 # Configurer le signal SIGINT pour capturer Ctrl+C
 signal.signal(signal.SIGINT, handle_exit)
 
-def create_section(window, height, width, y, x, title, active=False):
-    """Crée une section avec ou sans surbrillance selon l'état actif"""
+def create_section(window, height, width, y, x, title):
+    """Crée une section avec un titre"""
     section = window.subwin(height, width, y, x)
     section.attron(curses.color_pair(1))  # Couleur verte pour tout le texte
     section.box()
     section.attroff(curses.color_pair(1))
     section.addstr(0, 1, title[:width - 2])  # Limiter le titre à la largeur de la section
+    section.refresh()
     return section
 
 def display_system_info(section):
     """Affiche l'utilisation CPU et RAM dans la section spécifiée"""
-    section.clear()
-    section.box()
-    section.attron(curses.color_pair(1))  # Couleur verte pour le texte
-    section.addstr(0, 1, "System Info")  # Affiche le titre de la section
-
+    section.attron(curses.color_pair(1))  # Couleur verte
+    max_y, max_x = section.getmaxyx()
+    
     cpu_percents = psutil.cpu_percent(interval=None, percpu=True)  # Utiliser interval=None pour des lectures plus rapides
     ram_usage = psutil.virtual_memory().percent
 
+    section.addstr(1, 1, " " * (max_x - 2))  # Effacer l'ancienne ligne
     for i, cpu_percent in enumerate(cpu_percents):
         bar = '█' * int(cpu_percent / 10)
         section.addstr(i + 1, 1, f"CPU {i+1}: {cpu_percent}% | {bar.ljust(10)}")
@@ -60,58 +63,67 @@ def display_system_info(section):
     section.refresh()
 
 def display_directory_contents(section, scroll_pos, directory):
-    """Affiche les fichiers et dossiers du répertoire courant du terminal"""
-    section.clear()
-    section.box()
+    """Affiche les fichiers et dossiers du répertoire courant du terminal, en vidant la section avant chaque mise à jour"""
     section.attron(curses.color_pair(1))  # Couleur verte pour le texte
-    section.addstr(0, 1, "Files/Directories")  # Affiche le titre de la section
+    max_y, max_x = section.getmaxyx()
+
+    # Effacer tout le contenu avant d'afficher les nouveaux fichiers
+    section.clear()
+    section.box()  # Recréer la bordure après avoir effacé le contenu
 
     try:
         files = os.listdir(directory)
     except Exception as e:
         files = [f"Error: {e}"]
 
-    max_lines = section.getmaxyx()[0] - 2  # Moins l'espace pour le titre et la bordure
-    files_to_display = files[scroll_pos:scroll_pos + max_lines]
+    files_to_display = files[scroll_pos:scroll_pos + max_y - 2]
 
     for idx, file in enumerate(files_to_display):
-        section.addstr(idx + 1, 1, file[:section.getmaxyx()[1] - 2])  # Ajuste la largeur à la section
+        section.addstr(idx + 1, 1, f"{file.ljust(max_x - 2)}")  # Effacer l'ancienne ligne et afficher le fichier
 
     section.attroff(curses.color_pair(1))
     section.refresh()
 
 def display_running_processes(section, scroll_pos):
     """Affiche les processus en cours dans la section spécifiée avec défilement"""
-    section.clear()
-    section.box()
     section.attron(curses.color_pair(1))  # Couleur verte pour le texte
-    section.addstr(0, 1, "Running Processes")  # Affiche le titre de la section
-
+    max_y, max_x = section.getmaxyx()
+    
     try:
         processes = [(p.info['pid'], p.info['name']) for p in psutil.process_iter(['pid', 'name'])]
     except Exception as e:
         processes = [(None, f"Error: {e}")]
 
-    max_lines = section.getmaxyx()[0] - 2  # Moins l'espace pour le titre et la bordure
-    processes_to_display = processes[scroll_pos:scroll_pos + max_lines]
+    processes_to_display = processes[scroll_pos:scroll_pos + max_y - 2]
 
     for idx, (pid, name) in enumerate(processes_to_display):
-        section.addstr(idx + 1, 1, f"{pid}: {name[:20]}"[:section.getmaxyx()[1] - 2])  # Ajuste la largeur à la section
+        section.addstr(idx + 1, 1, f"{pid}: {name[:20]}".ljust(max_x - 2))  # Affiche et efface l'ancienne ligne
 
     section.attroff(curses.color_pair(1))
     section.refresh()
 
 def display_datetime(section):
     """Affiche la date et l'heure dans la section 4"""
-    section.clear()
-    section.box()
     section.attron(curses.color_pair(1))  # Couleur verte pour le texte
-    section.addstr(0, 1, "Date and Time")  # Affiche le titre de la section
+    max_y, max_x = section.getmaxyx()
 
     now = datetime.now().strftime("%H:%M:%S - %d/%m/%Y")
-    section.addstr(1, 1, now[:section.getmaxyx()[1] - 2])  # Limite l'affichage à la largeur de la section
+    section.addstr(1, 1, f"{now.ljust(max_x - 2)}")  # Limite l'affichage à la largeur de la section
 
     section.attroff(curses.color_pair(1))
+    section.refresh()
+
+def display_additional_info(section):
+    """Affiche les informations supplémentaires avec les touches à utiliser"""
+    section.attron(curses.color_pair(1))  # Couleur verte pour le texte
+    section.addstr(1, 1, "F1 = System Info")
+    section.addstr(2, 1, "F2 = Files/Directories")
+    section.addstr(3, 1, "F3 = Running Processes")
+    section.addstr(4, 1, "F4 = Terminal Input")
+    section.addstr(5, 1, "F5 = Terminal Output")
+    section.addstr(6, 1, "F6 = Clear Input")
+    section.addstr(7, 1, "F7 = Clear Output")
+    section.addstr(8, 1, "F8 = Exit Program")
     section.refresh()
 
 def clean_terminal_output(output):
@@ -124,12 +136,34 @@ def clean_terminal_output(output):
 
     return cleaned_output.strip()
 
-def change_window(window_name):
-    """Change la fenêtre active en fonction du nom donné"""
-    global current_window
-    current_window = window_name
+def update_terminal_input(section, input_buffer, width):
+    """Met à jour l'affichage du texte dans la zone de saisie du terminal sans effacer le titre"""
+    section.attron(curses.color_pair(1))
+    section.move(1, 1)  # Place le curseur à l'endroit où commence l'input (ligne 1, colonne 1)
+    section.clrtoeol()  # Efface la ligne actuelle, sauf la bordure
+    section.addstr(1, 1, input_buffer.ljust(width - 2))  # Réécrit le buffer dans la zone d'input
+    section.attroff(curses.color_pair(1))
+    section.refresh()
+
+def clear_terminal_output(section):
+    """Efface le contenu de la section terminal output"""
+    global output_lines
+    output_lines = []  # Réinitialise les lignes de sortie
+    section.clear()  # Efface tout le contenu de la section
+    section.box()  # Recrée la bordure après avoir effacé le contenu
+    section.refresh()
+
+def run_interactive_program(command):
+    """Exécute un programme interactif comme nano, vim, etc., en sortant temporairement de curses"""
+    curses.endwin()  # Fermer temporairement curses
+    os.system(command)  # Exécuter le programme
+    curses.initscr()  # Réinitialiser curses
+    curses.curs_set(0)  # Cacher à nouveau le curseur
+    curses.start_color()  # Initialiser les couleurs
+    curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
 
 def main(stdscr):
+    global current_window  # Déclarer current_window comme global pour éviter l'erreur
     curses.curs_set(0)
     curses.start_color()  # Initialiser les couleurs
     curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)  # Couleur verte pour tout le texte
@@ -148,15 +182,17 @@ def main(stdscr):
     global file_scroll_pos, process_scroll_pos, last_system_refresh, last_terminal_refresh, input_buffer, output_lines, last_directory, last_prompt
 
     # Crée les sections une seule fois
-    top_section1 = create_section(stdscr, top_height, left_width, 0, 0, "System Info", active=False)
-    top_section2 = create_section(stdscr, top_height, left_width, 0, left_width, "Files/Directories", active=True)
-    left_section = create_section(stdscr, bottom_height, left_width, top_height, 0, "Running Processes", active=False)
-    right_section_output = create_section(stdscr, max_height - 3, right_width, 0, left_width + middle_width, "Terminal Output", active=False)
-    right_section_input = create_section(stdscr, 3, right_width, max_height - 3, left_width + middle_width, "Terminal Input", active=False)
+    top_section1 = create_section(stdscr, top_height, left_width, 0, 0, "System Info")
+    top_section2 = create_section(stdscr, top_height, left_width, 0, left_width, "Files/Directories")
+    left_section = create_section(stdscr, bottom_height, left_width, top_height, 0, "Running Processes")
+    right_section_output = create_section(stdscr, max_height - 3, right_width, 0, left_width + middle_width, "Terminal Output")
+    right_section_input = create_section(stdscr, 3, right_width, max_height - 3, left_width + middle_width, "Terminal Input")
 
-    # Sections 4 et 5 : maintenant l'une en dessous de l'autre
-    bottom_section1 = create_section(stdscr, bottom_height // 2, middle_width, top_height, left_width, "Date and Time", active=False)
-    bottom_section2 = create_section(stdscr, bottom_height // 2, middle_width, top_height + (bottom_height // 2), left_width, "Additional Info", active=False)
+    # Section Date and Time
+    bottom_section1 = create_section(stdscr, bottom_height // 2, middle_width, top_height, left_width, "Date and Time")
+
+    # Section Additional Info avec les touches
+    bottom_section2 = create_section(stdscr, bottom_height // 2, middle_width, top_height + (bottom_height // 2), left_width, "Additional Info")
 
     stdscr.refresh()
 
@@ -186,13 +222,14 @@ def main(stdscr):
         while True:
             current_time = time.time()
 
-            # Rafraîchissement plus rapide pour la section système (0.2 seconde)
-            if current_time - last_system_refresh >= 0.2:
+            # Rafraîchissement toutes les 0.5 secondes pour éviter le clignotement
+            if current_time - last_system_refresh >= 0.5:
                 display_system_info(top_section1)
                 display_datetime(bottom_section1)  # Mise à jour de l'heure
+                display_additional_info(bottom_section2)  # Afficher les instructions
                 last_system_refresh = current_time
 
-            if current_time - last_terminal_refresh >= 0.1:  # Rafraîchissement plus rapide pour le terminal et input
+            if current_time - last_terminal_refresh >= 0.5:  # Rafraîchissement du terminal et input
                 rlist, _, _ = select.select([master], [], [], 0.1)
                 if master in rlist:
                     output = os.read(master, 1024).decode('utf-8', errors='ignore')
@@ -209,8 +246,6 @@ def main(stdscr):
                         output_lines = output_lines[-max_output_lines:]
 
                     # Affichage de la sortie du terminal
-                    right_section_output.clear()
-                    right_section_output.box()
                     right_section_output.attron(curses.color_pair(1))
                     for idx, line in enumerate(output_lines):
                         right_section_output.addstr(idx + 1, 1, line[:right_width - 2])
@@ -236,33 +271,43 @@ def main(stdscr):
             if rlist:
                 key = stdscr.getch()
 
-                # Gestion des touches F1, F2, F3, F4 pour changer la fenêtre active
+                # Gestion des touches F1, F2, F3, F4, F5, F6, F7, F8 pour changer la fenêtre active et les actions
                 if key == curses.KEY_F1:
-                    change_window("system_info")
+                    current_window = "system_info"
                 elif key == curses.KEY_F2:
-                    change_window("files")
+                    current_window = "files"
                 elif key == curses.KEY_F3:
-                    change_window("processes")
+                    current_window = "processes"
                 elif key == curses.KEY_F4:
-                    change_window("input")
+                    current_window = "input"
+                elif key == curses.KEY_F5:
+                    current_window = "output"
+                elif key == curses.KEY_F6:
+                    input_buffer = ""  # Efface l'input du terminal
+                    update_terminal_input(right_section_input, input_buffer, right_width)
+                elif key == curses.KEY_F7:
+                    clear_terminal_output(right_section_output)  # Vider la sortie du terminal
+                elif key == curses.KEY_F8:
+                    handle_exit(None, None)  # Ferme le programme proprement
 
                 # Gérer la saisie dans "Terminal Input" lorsque sélectionné
                 if current_window == "input":
                     if key in [curses.KEY_ENTER, 10]:  # Touche Entrée
-                        os.write(master, (input_buffer + "\n").encode())  # Envoie la commande au terminal
+                        if input_buffer.strip():  # Vérifie si la commande n'est pas vide
+                            command = input_buffer.strip().split()[0]  # Récupère juste la commande (sans arguments)
+                            if command in interactive_programs:  # Si c'est un programme interactif
+                                run_interactive_program(input_buffer)  # Exécute le programme
+                            else:
+                                os.write(master, (input_buffer + "\n").encode())  # Envoie la commande au terminal
                         input_buffer = ""  # Réinitialise le buffer après exécution de la commande
-                    elif key == 127:  # Touche Retour arrière
-                        input_buffer = input_buffer[:-1]
+                    elif key in [127, 8]:  # Touche Retour arrière (Backspace)
+                        if len(input_buffer) > 0:
+                            input_buffer = input_buffer[:-1]  # Supprimer le dernier caractère du buffer
                     elif 32 <= key <= 126:  # Caractères imprimables
                         input_buffer += chr(key)
 
-                    # Afficher le contenu saisi
-                    right_section_input.clear()
-                    right_section_input.box()
-                    right_section_input.attron(curses.color_pair(1))
-                    right_section_input.addstr(1, 1, input_buffer[:right_width - 2])
-                    right_section_input.attroff(curses.color_pair(1))
-                    right_section_input.refresh()
+                    # Afficher le contenu saisi et le remplacer par des espaces si nécessaire
+                    update_terminal_input(right_section_input, input_buffer, right_width)
 
                 # Défilement dans la section fichiers ou processus
                 if key == curses.KEY_DOWN and current_window == "files":
@@ -281,4 +326,3 @@ def main(stdscr):
         curses.endwin()
 
 curses.wrapper(main)
-
