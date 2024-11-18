@@ -9,6 +9,7 @@ import signal
 import select
 import re
 import time
+import readline
 from datetime import datetime
 
 # Variables globales pour le défilement et la fenêtre active
@@ -23,8 +24,9 @@ last_directory = ""  # Pour suivre le répertoire actuel du terminal
 last_prompt = "$"  # On laisse uniquement le symbole "$" pour le prompt
 
 # Liste des programmes interactifs que nous allons traiter
-interactive_programs = ["nano", "vim", "vi", "htop", "less", "more", "man"]
-
+interactive_programs = ["nano", "vim", "vi", "htop", "less", "more" , "w3m", "chafa" ,"alpine","weechat" ,"lynx", "man"]
+# Autocomplete commande
+autocomplete_commands = interactive_programs + ["ls", "cd", "cat", "mkdir", "rm", "touch"]
 # Fonction pour quitter proprement avec Ctrl+C ou F8
 def handle_exit(signum=None, frame=None):
     curses.endwin()
@@ -32,6 +34,33 @@ def handle_exit(signum=None, frame=None):
 
 # Configurer le signal SIGINT pour capturer Ctrl+C
 signal.signal(signal.SIGINT, handle_exit)
+
+def completer(text, state):
+    """
+    Fonction d'autocomplétion pour `readline`.
+    Fournit des suggestions basées sur l'entrée utilisateur.
+    """
+    # Suggestions pour les commandes
+    options = [cmd for cmd in autocomplete_commands if cmd.startswith(text)]
+
+    # Ajouter les fichiers et dossiers du répertoire courant
+    if '/' in text or '.' in text:
+        dirname = os.path.dirname(text) or '.'
+        basename = os.path.basename(text)
+        try:
+            options += [
+                os.path.join(dirname, f)
+                for f in os.listdir(dirname)
+                if f.startswith(basename)
+            ]
+        except FileNotFoundError:
+            pass
+
+    return options[state] if state < len(options) else None
+
+# Configurer `readline` avec le compléteur
+readline.set_completer(completer)
+readline.parse_and_bind("tab: complete")
 
 def create_section(window, height, width, y, x, title):
     """Crée une section avec un titre"""
@@ -124,6 +153,7 @@ def display_additional_info(section):
     section.addstr(6, 1, "F6 = Clear Input")
     section.addstr(7, 1, "F7 = Clear Output")
     section.addstr(8, 1, "F8 = Exit Program")
+    section.addstr(9, 1, "F9 = Background Program")
     section.refresh()
 
 def clean_terminal_output(output):
@@ -145,6 +175,7 @@ def update_terminal_input(section, input_buffer, width):
     section.attroff(curses.color_pair(1))
     section.refresh()
 
+
 def clear_terminal_output(section):
     """Efface le contenu de la section terminal output"""
     global output_lines
@@ -154,12 +185,41 @@ def clear_terminal_output(section):
     section.refresh()
 
 def run_interactive_program(command):
-    """Exécute un programme interactif comme nano, vim, etc., en sortant temporairement de curses"""
+    """
+    Exécute un programme interactif comme nano, vim, chafa, etc., en sortant temporairement de curses.
+    """
     curses.endwin()  # Fermer temporairement curses
-    os.system(command)  # Exécuter le programme
+    if command.startswith("chafa "):  # Si la commande est chafa, extraire le chemin de l'image
+        os.system(command)  # Exécuter chafa avec l'image spécifiée
+        print("\nAppuyez sur 'q' pour revenir à l'interface...")
+        while True:
+            key = input().strip().lower()  # Attendre 'q' pour quitter
+            if key == 'q':
+                break
+    else:
+        os.system(command)  # Exécuter d'autres programmes interactifs normalement
+
+    # Réinitialiser curses après la sortie
+    curses.initscr()
+    curses.curs_set(0)
+    curses.start_color()
+    curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
+
+def handle_background(signum, frame):
+    """
+    Suspend temporairement l'interface et la remet en arrière-plan.
+    """
+    curses.endwin()  # Fermer temporairement curses
+    print("Interface suspendue. Appuyez sur 'fg' dans le terminal pour la restaurer.")
+    os.kill(os.getpid(), signal.SIGSTOP)  # Suspendre le processus
+
+def handle_restore():
+    """
+    Restaure l'interface après qu'elle ait été suspendue.
+    """
     curses.initscr()  # Réinitialiser curses
-    curses.curs_set(0)  # Cacher à nouveau le curseur
-    curses.start_color()  # Initialiser les couleurs
+    curses.curs_set(0)
+    curses.start_color()
     curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
 
 def main(stdscr):
@@ -180,6 +240,9 @@ def main(stdscr):
     right_width = max_width // 2
 
     global file_scroll_pos, process_scroll_pos, last_system_refresh, last_terminal_refresh, input_buffer, output_lines, last_directory, last_prompt
+
+    # Configurer le signal pour suspendre l'interface
+    signal.signal(signal.SIGTSTP, handle_background)
 
     # Crée les sections une seule fois
     top_section1 = create_section(stdscr, top_height, left_width, 0, 0, "System Info")
@@ -289,6 +352,8 @@ def main(stdscr):
                     clear_terminal_output(right_section_output)  # Vider la sortie du terminal
                 elif key == curses.KEY_F8:
                     handle_exit(None, None)  # Ferme le programme proprement
+                elif key == curses.KEY_F9:
+                    handle_background(None, None)  # Met l'interface en background
 
                 # Gérer la saisie dans "Terminal Input" lorsque sélectionné
                 if current_window == "input":
@@ -325,4 +390,6 @@ def main(stdscr):
         # Gérer proprement la fermeture avec Ctrl+C
         curses.endwin()
 
+
 curses.wrapper(main)
+
